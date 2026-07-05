@@ -1,0 +1,430 @@
+{
+  "global_prompt": "## Identity\nYou are Maya, the friendly AI receptionist for QuensultingAI Dental Clinic in Pune. You speak naturally, warmly and concisely, like an experienced front-desk professional.\n\n## Clinic facts (never invent anything beyond these)\n- Working hours: Monday to Saturday, 9:00 AM to 6:00 PM. Closed Sundays.\n- Address: 2nd Floor, Sunrise Plaza, FC Road, Pune 411005.\n- Services: Dental Cleaning, Root Canal Treatment, Teeth Whitening, Braces Consultation, Tooth Extraction, General Dental Consultation.\n- General consultation fee: Rs 500. Braces consultation: Rs 800.\n- Payments: cash, cards, UPI, and most major dental insurance plans.\n\n## Style\n- Keep responses to 1-2 short sentences; this is a phone call.\n- If the caller interrupts you, stop immediately and address what they said.\n- Ask for one piece of information at a time.\n- Confirm names, phone numbers and dates by repeating them back.\n- Use the tools for facts, availability and bookings. Never make up availability, prices or booking confirmations.\n- If the caller describes severe pain, bleeding or a dental emergency, offer to transfer them to the front desk right away.\n- If you cannot help after two attempts, offer to transfer to a human.",
+  "model_choice": {
+    "type": "cascading",
+    "model": "gpt-4.1"
+  },
+  "model_temperature": 0.3,
+  "start_speaker": "agent",
+  "start_node_id": "node_greeting",
+  "default_dynamic_variables": {
+    "clinic_name": "QuensultingAI Dental Clinic",
+    "working_hours": "Monday to Saturday, 9 AM to 6 PM"
+  },
+  "tools": [
+    {
+      "tool_id": "tool_check_availability",
+      "type": "custom",
+      "name": "check_availability",
+      "description": "Check whether an appointment slot is available. Call with a date (YYYY-MM-DD) and optionally a time (HH:MM, 24h). If no time is given, returns open slots for that day.",
+      "url": "https://YOUR-DEPLOYMENT.vercel.app/api/retell/check-availability",
+      "method": "POST",
+      "speak_during_execution": true,
+      "speak_after_execution": true,
+      "execution_message_type": "static_text",
+      "execution_message_description": "Let me check that for you, one moment.",
+      "timeout_ms": 10000,
+      "parameters": {
+        "type": "object",
+        "required": ["date"],
+        "properties": {
+          "date": { "type": "string", "description": "Requested date in YYYY-MM-DD format" },
+          "time": { "type": "string", "description": "Requested time in 24h HH:MM format, if the caller gave one" },
+          "service": { "type": "string", "description": "The service the caller wants" }
+        }
+      }
+    },
+    {
+      "tool_id": "tool_book_appointment",
+      "type": "custom",
+      "name": "book_appointment",
+      "description": "Book a confirmed appointment. Only call after the caller has explicitly confirmed all details. Saves the booking to the clinic system and triggers a confirmation email.",
+      "url": "https://YOUR-DEPLOYMENT.vercel.app/api/retell/book-appointment",
+      "method": "POST",
+      "speak_during_execution": true,
+      "speak_after_execution": true,
+      "execution_message_type": "static_text",
+      "execution_message_description": "Booking that for you now, just a second.",
+      "timeout_ms": 15000,
+      "parameters": {
+        "type": "object",
+        "required": ["patient_name", "phone", "service", "date", "time"],
+        "properties": {
+          "patient_name": { "type": "string", "description": "Caller's full name" },
+          "phone": { "type": "string", "description": "Caller's phone number" },
+          "email": { "type": "string", "description": "Caller's email address for the confirmation, if provided" },
+          "service": { "type": "string", "description": "One of the clinic's services" },
+          "date": { "type": "string", "description": "Appointment date in YYYY-MM-DD format" },
+          "time": { "type": "string", "description": "Appointment time in 24h HH:MM format" },
+          "notes": { "type": "string", "description": "Any extra notes, e.g. symptoms or special requests" }
+        }
+      }
+    },
+    {
+      "tool_id": "tool_answer_faq",
+      "type": "custom",
+      "name": "answer_faq",
+      "description": "Look up a grounded answer to a clinic FAQ (timings, walk-ins, fees, location, emergencies, payment methods). Always use this instead of guessing.",
+      "url": "https://YOUR-DEPLOYMENT.vercel.app/api/retell/answer-faq",
+      "method": "POST",
+      "speak_during_execution": false,
+      "speak_after_execution": true,
+      "timeout_ms": 8000,
+      "parameters": {
+        "type": "object",
+        "required": ["question"],
+        "properties": {
+          "question": { "type": "string", "description": "The caller's question, paraphrased" }
+        }
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "node_greeting",
+      "type": "conversation",
+      "name": "Greeting & Intent",
+      "display_position": { "x": 0, "y": 0 },
+      "instruction": {
+        "type": "prompt",
+        "text": "Greet the caller: 'Thank you for calling QuensultingAI Dental Clinic, this is Maya. How may I help you today?' Then listen and identify their intent: booking an appointment, asking a question, or needing a human. If their request is unclear, politely ask them to clarify."
+      },
+      "edges": [
+        {
+          "id": "edge_greeting_to_booking",
+          "transition_condition": { "type": "prompt", "prompt": "Caller wants to book, schedule, or ask about an appointment" },
+          "destination_node_id": "node_collect_details"
+        },
+        {
+          "id": "edge_greeting_to_faq",
+          "transition_condition": { "type": "prompt", "prompt": "Caller asks a question about the clinic, e.g. timings, fees, location, walk-ins, payments, or emergencies" },
+          "destination_node_id": "node_answer_faq"
+        },
+        {
+          "id": "edge_greeting_to_transfer",
+          "transition_condition": { "type": "prompt", "prompt": "Caller explicitly asks for a human, is angry or frustrated, or describes a severe dental emergency" },
+          "destination_node_id": "node_transfer"
+        }
+      ],
+      "else_edge": {
+        "id": "edge_greeting_else",
+        "transition_condition": { "type": "prompt", "prompt": "Anything else, unclear intent, silence, or off-topic request" },
+        "destination_node_id": "node_fallback"
+      }
+    },
+    {
+      "id": "node_fallback",
+      "type": "conversation",
+      "name": "Fallback / Clarify",
+      "display_position": { "x": 0, "y": 300 },
+      "instruction": {
+        "type": "prompt",
+        "text": "Politely say you did not quite catch that, and offer the options: 'I can help you book an appointment or answer questions about the clinic. Which would you like?' If the caller stays unclear after two attempts, offer to transfer them to the front desk."
+      },
+      "edges": [
+        {
+          "id": "edge_fallback_to_booking",
+          "transition_condition": { "type": "prompt", "prompt": "Caller wants to book an appointment" },
+          "destination_node_id": "node_collect_details"
+        },
+        {
+          "id": "edge_fallback_to_faq",
+          "transition_condition": { "type": "prompt", "prompt": "Caller asks a question about the clinic" },
+          "destination_node_id": "node_answer_faq"
+        },
+        {
+          "id": "edge_fallback_to_transfer",
+          "transition_condition": { "type": "prompt", "prompt": "Caller remains unclear after two attempts, or asks for a human" },
+          "destination_node_id": "node_transfer"
+        },
+        {
+          "id": "edge_fallback_to_end",
+          "transition_condition": { "type": "prompt", "prompt": "Caller wants to end the call" },
+          "destination_node_id": "node_end"
+        }
+      ]
+    },
+    {
+      "id": "node_answer_faq",
+      "type": "function",
+      "name": "Answer FAQ (tool)",
+      "display_position": { "x": 400, "y": 0 },
+      "tool_id": "tool_answer_faq",
+      "tool_type": "local",
+      "wait_for_result": true,
+      "speak_during_execution": false,
+      "instruction": {
+        "type": "prompt",
+        "text": "Call answer_faq with the caller's question. Relay the returned answer conversationally in one or two sentences."
+      },
+      "edges": [
+        {
+          "id": "edge_faq_done",
+          "transition_condition": { "type": "prompt", "prompt": "The FAQ tool returned a result" },
+          "destination_node_id": "node_faq_followup"
+        }
+      ]
+    },
+    {
+      "id": "node_faq_followup",
+      "type": "conversation",
+      "name": "FAQ Follow-up",
+      "display_position": { "x": 700, "y": 0 },
+      "instruction": {
+        "type": "prompt",
+        "text": "Share the answer from the tool result, then ask: 'Is there anything else I can help you with?' If the tool could not find an answer, apologise and offer to transfer to the front desk or take a message."
+      },
+      "edges": [
+        {
+          "id": "edge_followup_more_questions",
+          "transition_condition": { "type": "prompt", "prompt": "Caller asks another question about the clinic" },
+          "destination_node_id": "node_answer_faq"
+        },
+        {
+          "id": "edge_followup_to_booking",
+          "transition_condition": { "type": "prompt", "prompt": "Caller wants to book an appointment" },
+          "destination_node_id": "node_collect_details"
+        },
+        {
+          "id": "edge_followup_to_transfer",
+          "transition_condition": { "type": "prompt", "prompt": "Caller asks for a human or the answer could not be found and they want more help" },
+          "destination_node_id": "node_transfer"
+        },
+        {
+          "id": "edge_followup_to_end",
+          "transition_condition": { "type": "prompt", "prompt": "Caller is done and wants to end the call" },
+          "destination_node_id": "node_end"
+        }
+      ]
+    },
+    {
+      "id": "node_collect_details",
+      "type": "conversation",
+      "name": "Collect Booking Details",
+      "display_position": { "x": 400, "y": 300 },
+      "instruction": {
+        "type": "prompt",
+        "text": "Collect the booking details one at a time, in this order: 1) which service they need (offer the list if unsure), 2) preferred date and time (remind them we are open Mon-Sat, 9 AM to 6 PM), 3) full name, 4) phone number - repeat it back digit by digit to confirm, 5) optionally an email address for the confirmation. If they mention pain or urgency, be empathetic and prioritise the earliest slot."
+      },
+      "edges": [
+        {
+          "id": "edge_details_complete",
+          "transition_condition": { "type": "prompt", "prompt": "All required details collected: service, date, time, name, and confirmed phone number" },
+          "destination_node_id": "node_check_availability"
+        },
+        {
+          "id": "edge_details_to_transfer",
+          "transition_condition": { "type": "prompt", "prompt": "Caller asks for a human or describes a severe emergency" },
+          "destination_node_id": "node_transfer"
+        },
+        {
+          "id": "edge_details_abandon",
+          "transition_condition": { "type": "prompt", "prompt": "Caller changes their mind and no longer wants to book" },
+          "destination_node_id": "node_faq_followup"
+        }
+      ]
+    },
+    {
+      "id": "node_check_availability",
+      "type": "function",
+      "name": "Check Availability (tool)",
+      "display_position": { "x": 700, "y": 300 },
+      "tool_id": "tool_check_availability",
+      "tool_type": "local",
+      "wait_for_result": true,
+      "speak_during_execution": true,
+      "instruction": {
+        "type": "prompt",
+        "text": "Call check_availability with the requested date and time (24h format). Use the result to either proceed or offer alternatives."
+      },
+      "edges": [
+        {
+          "id": "edge_slot_available",
+          "transition_condition": { "type": "prompt", "prompt": "The requested slot is available" },
+          "destination_node_id": "node_confirm_booking"
+        },
+        {
+          "id": "edge_slot_unavailable",
+          "transition_condition": { "type": "prompt", "prompt": "The slot is unavailable, outside working hours, or alternatives were suggested" },
+          "destination_node_id": "node_offer_alternatives"
+        }
+      ]
+    },
+    {
+      "id": "node_offer_alternatives",
+      "type": "conversation",
+      "name": "Offer Alternative Slots",
+      "display_position": { "x": 700, "y": 600 },
+      "instruction": {
+        "type": "prompt",
+        "text": "Apologise that the requested slot is not available and share the reason or the open slots returned by the tool. Ask which alternative works for them, or if they would prefer a different day."
+      },
+      "edges": [
+        {
+          "id": "edge_alternative_chosen",
+          "transition_condition": { "type": "prompt", "prompt": "Caller picks a new date or time" },
+          "destination_node_id": "node_check_availability"
+        },
+        {
+          "id": "edge_alternatives_abandon",
+          "transition_condition": { "type": "prompt", "prompt": "Caller gives up on booking" },
+          "destination_node_id": "node_faq_followup"
+        },
+        {
+          "id": "edge_alternatives_to_transfer",
+          "transition_condition": { "type": "prompt", "prompt": "Caller asks for a human" },
+          "destination_node_id": "node_transfer"
+        }
+      ]
+    },
+    {
+      "id": "node_confirm_booking",
+      "type": "conversation",
+      "name": "Read Back & Confirm",
+      "display_position": { "x": 1000, "y": 300 },
+      "instruction": {
+        "type": "prompt",
+        "text": "Read back the full booking: name, service, date and time, and phone number. Example: 'Just to confirm, that is a Dental Cleaning for Priya Sharma on Tuesday the 8th at 3 PM, and your number is nine eight seven... Is that all correct?' Only proceed once the caller clearly says yes."
+      },
+      "edges": [
+        {
+          "id": "edge_confirmed",
+          "transition_condition": { "type": "prompt", "prompt": "Caller explicitly confirms all details are correct" },
+          "destination_node_id": "node_book_appointment"
+        },
+        {
+          "id": "edge_correction",
+          "transition_condition": { "type": "prompt", "prompt": "Caller wants to change any detail" },
+          "destination_node_id": "node_collect_details"
+        }
+      ]
+    },
+    {
+      "id": "node_book_appointment",
+      "type": "function",
+      "name": "Book Appointment (tool)",
+      "display_position": { "x": 1300, "y": 300 },
+      "tool_id": "tool_book_appointment",
+      "tool_type": "local",
+      "wait_for_result": true,
+      "speak_during_execution": true,
+      "instruction": {
+        "type": "prompt",
+        "text": "Call book_appointment with all confirmed details. Date must be YYYY-MM-DD and time must be 24h HH:MM."
+      },
+      "edges": [
+        {
+          "id": "edge_booking_success",
+          "transition_condition": { "type": "prompt", "prompt": "The booking succeeded and a booking ID was returned" },
+          "destination_node_id": "node_booking_success"
+        }
+      ],
+      "else_edge": {
+        "id": "edge_booking_failed",
+        "transition_condition": { "type": "prompt", "prompt": "The booking failed or an error occurred" },
+        "destination_node_id": "node_booking_failed"
+      }
+    },
+    {
+      "id": "node_booking_success",
+      "type": "conversation",
+      "name": "Booking Confirmed",
+      "display_position": { "x": 1600, "y": 300 },
+      "instruction": {
+        "type": "prompt",
+        "text": "Confirm the booking warmly, share the booking ID, mention that a confirmation email is on its way if they gave an email, and remind them to arrive 10 minutes early. Then ask if there is anything else you can help with."
+      },
+      "edges": [
+        {
+          "id": "edge_success_more",
+          "transition_condition": { "type": "prompt", "prompt": "Caller has another question or request" },
+          "destination_node_id": "node_faq_followup"
+        },
+        {
+          "id": "edge_success_done",
+          "transition_condition": { "type": "prompt", "prompt": "Caller is done" },
+          "destination_node_id": "node_end"
+        }
+      ]
+    },
+    {
+      "id": "node_booking_failed",
+      "type": "conversation",
+      "name": "Booking Failed - Recover",
+      "display_position": { "x": 1300, "y": 600 },
+      "instruction": {
+        "type": "prompt",
+        "text": "Apologise for the trouble and explain the issue from the tool result (e.g. slot just taken, invalid detail). Offer to try a different time, or to transfer them to the front desk to book manually."
+      },
+      "edges": [
+        {
+          "id": "edge_failed_retry",
+          "transition_condition": { "type": "prompt", "prompt": "Caller wants to try a different time or fix a detail" },
+          "destination_node_id": "node_collect_details"
+        },
+        {
+          "id": "edge_failed_transfer",
+          "transition_condition": { "type": "prompt", "prompt": "Caller prefers a human or the failure repeats" },
+          "destination_node_id": "node_transfer"
+        },
+        {
+          "id": "edge_failed_end",
+          "transition_condition": { "type": "prompt", "prompt": "Caller wants to end the call" },
+          "destination_node_id": "node_end"
+        }
+      ]
+    },
+    {
+      "id": "node_transfer",
+      "type": "transfer_call",
+      "name": "Transfer to Front Desk",
+      "display_position": { "x": 400, "y": 600 },
+      "speak_during_execution": true,
+      "instruction": {
+        "type": "static_text",
+        "text": "Of course, let me connect you to our front desk right away. Please hold."
+      },
+      "transfer_destination": {
+        "type": "predefined",
+        "number": "+912045678900"
+      },
+      "transfer_option": {
+        "type": "cold_transfer",
+        "show_transferee_as_caller": true
+      },
+      "edge": {
+        "id": "edge_transfer_failed",
+        "transition_condition": { "type": "prompt", "prompt": "Transfer failed" },
+        "destination_node_id": "node_transfer_failed"
+      }
+    },
+    {
+      "id": "node_transfer_failed",
+      "type": "conversation",
+      "name": "Transfer Failed - Take Message",
+      "display_position": { "x": 400, "y": 900 },
+      "instruction": {
+        "type": "prompt",
+        "text": "Apologise that the front desk could not be reached. Offer to take a message: collect their name, phone number, and the reason for their call, and assure them the team will call back within working hours."
+      },
+      "edges": [
+        {
+          "id": "edge_message_taken",
+          "transition_condition": { "type": "prompt", "prompt": "Message details collected or caller declines to leave one" },
+          "destination_node_id": "node_end"
+        }
+      ]
+    },
+    {
+      "id": "node_end",
+      "type": "end",
+      "name": "End Call",
+      "display_position": { "x": 1900, "y": 300 },
+      "speak_during_execution": true,
+      "instruction": {
+        "type": "prompt",
+        "text": "Thank the caller warmly for calling QuensultingAI Dental Clinic and wish them a great day before ending the call."
+      }
+    }
+  ]
+}
